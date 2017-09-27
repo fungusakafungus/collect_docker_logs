@@ -1,0 +1,45 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  labels:
+    run: venv
+  name: venv
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      run: venv
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        run: venv
+    spec:
+      volumes:
+        - name: code
+          hostPath:
+            path: /hosthome/ilya/python/collect_docker_logs
+        - name: containers
+          hostPath:
+            path: /var/lib/docker/containers
+      containers:
+      - args:
+        - sleep
+        - "3600"
+        image: venv
+        imagePullPolicy: Never
+        name: venv
+        resources: {}
+        volumeMounts:
+          - name: containers
+            mountPath: /var/lib/docker/containers/
+            readOnly: true
+          - name: code
+            mountPath: /code
+
+      restartPolicy: Always
