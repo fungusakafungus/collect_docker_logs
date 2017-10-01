@@ -4,7 +4,7 @@ metadata:
   labels:
     run: venv
   name: venv
-  namespace: default
+  namespace: kube-system
 spec:
   replicas: 1
   selector:
@@ -23,14 +23,14 @@ spec:
       volumes:
         - name: code
           hostPath:
-            path: /hosthome/ilya/python/collect_docker_logs
+            path: /Users/margolin/src/collect_docker_logs
         - name: containers
           hostPath:
             path: /var/lib/docker/containers
       containers:
       - args:
         - sleep
-        - "3600"
+        - "36000"
         image: venv
         imagePullPolicy: Never
         name: venv
