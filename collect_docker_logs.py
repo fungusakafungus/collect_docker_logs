@@ -35,17 +35,19 @@ def container_watch(container_id, pod):
 
 
 def start_container_watch(container_id, pod):
+    print 'starting container %s:%s' % (pod.metadata.name, container_id)
     p = Process(target=container_watch, args=(container_id, pod))
-    p.name += ' ' + container_id
     p.start()
     CONTAINER_WATCHES[container_id] = p
 
 
 def start_pod_watch(pod):
+    print 'starting pod ' + pod.metadata.name
     PODS[pod.metadata.uid] = set()
 
 
 def stop_pod_watch(pod):
+    print 'stopping pod ' + pod.metadata.name
     for c in PODS[pod.metadata.uid]:
         stop_container_watch(c)
     del PODS[pod.metadata.uid]
@@ -90,13 +92,7 @@ def main():
         for pod in w.stream(v1.list_pod_for_all_namespaces):
             type_ = pod['type']
             pod = pod['object']
-            if pod.status.container_statuses:
-                container_ids = [s.container_id
-                                 for s in pod.status.container_statuses]
-            else:
-                container_ids = ''
-            print("%s\t%s\t%s\t%s" % (pod.status.pod_ip, pod.metadata.namespace,
-                                      pod.metadata.name, container_ids))
+            print pod.metadata.name, type_
             if type_ == 'ADDED':
                 start_pod_watch(pod)
             elif type_ == 'DELETED':
