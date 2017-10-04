@@ -15,3 +15,4 @@ RUN virtualenv --system-site-packages /usr/local
 ADD requirements.txt .
 RUN /usr/local/bin/pip install -r requirements.txt
 RUN /usr/local/bin/python -mkubernetes.client.api_client
+WORKDIR /code

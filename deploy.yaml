@@ -23,17 +23,18 @@ spec:
       volumes:
         - name: code
           hostPath:
-            path: /Users/margolin/src/collect_docker_logs
+            path: /home/ilya/python/collect_docker_logs
         - name: containers
           hostPath:
             path: /var/lib/docker/containers
       containers:
-      - args:
-        - sleep
-        - "36000"
+      - name: venv
+        args:
+        - sh
+        - -c
+        - './collect_docker_logs.py > log'
         image: venv
         imagePullPolicy: Never
-        name: venv
         resources: {}
         volumeMounts:
           - name: containers
@@ -41,5 +42,37 @@ spec:
             readOnly: true
           - name: code
             mountPath: /code
+
+      restartPolicy: Always
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  labels:
+    app: tailf
+  name: tailf
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: tailf
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        name: tailf
+    spec:
+      containers:
+      - name: tailf
+        image: busybox
+        args:
+        - sh
+        - -c
+        - 'for i in $(seq 1000); do printf "% 3i %s\n" $i "$(date)"; sleep 2; done'
 
       restartPolicy: Always
