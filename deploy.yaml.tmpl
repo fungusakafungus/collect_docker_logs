@@ -6,15 +6,9 @@ metadata:
   name: venv
   namespace: kube-system
 spec:
-  replicas: 1
   selector:
     matchLabels:
       run: venv
-  strategy:
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 1
-    type: RollingUpdate
   template:
     metadata:
       labels:
@@ -23,26 +17,24 @@ spec:
       volumes:
         - name: code
           hostPath:
-            path: /home/ilya/python/collect_docker_logs
+            path: $PWD
         - name: containers
           hostPath:
             path: /var/lib/docker/containers
       containers:
       - name: venv
         args:
-        - sh
-        - -c
-        - './collect_docker_logs.py > log'
+        - tail
+        - -f
+        - /dev/null
         image: venv
         imagePullPolicy: Never
-        resources: {}
         volumeMounts:
           - name: containers
             mountPath: /var/lib/docker/containers/
             readOnly: true
           - name: code
             mountPath: /code
-
       restartPolicy: Always
 ---
 apiVersion: extensions/v1beta1
@@ -53,15 +45,9 @@ metadata:
   name: tailf
   namespace: kube-system
 spec:
-  replicas: 1
   selector:
     matchLabels:
       name: tailf
-  strategy:
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 1
-    type: RollingUpdate
   template:
     metadata:
       labels:
@@ -74,5 +60,4 @@ spec:
         - sh
         - -c
         - 'for i in $(seq 1000); do printf "% 3i %s\n" $i "$(date)"; sleep 2; done'
-
       restartPolicy: Always

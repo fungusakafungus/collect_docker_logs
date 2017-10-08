@@ -13,6 +13,22 @@ CONTAINER_WATCHES = {}
 PODS = {}
 
 
+def get_container_meta(container_id, pod):
+    container_status = [cs for cs in pod.status.container_statuses
+                        if container_id in cs.container_id][0]
+    container_name = container_status.name
+    container_meta = {
+        'container_name': container_name,
+        'pod_name': pod.metadata.name,
+        'namespace': pod.metadata.namespace,
+    }
+    return container_meta
+
+
+def format_dict_for_print(d):
+    return ' '.join('='.join(i) for i in sorted(d.items()) if i[1])
+
+
 def container_watch(container_id, pod):
     import inotifyx
     setproctitle(getproctitle() + ' ' + container_id)
@@ -22,16 +38,21 @@ def container_watch(container_id, pod):
     try:
         log_file = open(log_filename)
         log_file.seek(0, 2)  # seek to end
-        watch = inotifyx.add_watch(ifd, log_filename, inotifyx.IN_MODIFY|inotifyx.IN_DELETE)
+        watch = inotifyx.add_watch(ifd, log_filename,
+                                   inotifyx.IN_MODIFY)
         while True:
             # next line blocks until file is modified or deleted
-            deleted = any(e.mask & inotifyx.IN_DELETE for e in inotifyx.get_events(ifd, 5))
+            events = inotifyx.get_events(ifd, 5)
+            print(*(e.wd for e in events))
+            deleted = any(e.mask & inotifyx.IN_DELETE
+                          for e in events)
             if deleted:
                 print('%s:%s: log deleted' % (pod.metadata.name, container_id))
                 return
             line = log_file.readline()
+            container_meta_print = format_dict_for_print(get_container_meta(container_id, pod))
             while line:
-                print(pod.metadata.name, ': ', json.loads(line)['log'], end='')
+                print(container_meta_print, json.loads(line)['log'], end='')
                 line = log_file.readline()
     finally:
         inotifyx.rm_watch(ifd, watch)
@@ -84,8 +105,8 @@ def update_pod_watch(pod):
     print('to_stop', to_stop)
     print('to_start', to_start)
     print([c for c in pod.status.container_statuses
-           if c.container_id
-           and c.container_id.replace('docker://', '') in to_start])
+           if c.container_id and
+           c.container_id.replace('docker://', '') in to_start])
     PODS[pod.metadata.uid] = api_container_ids
     for container_id in to_stop:
         stop_container_watch(container_id)
