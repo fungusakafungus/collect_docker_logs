@@ -43,14 +43,17 @@ def container_watch(container_id, pod):
         while True:
             # next line blocks until file is modified or deleted
             events = inotifyx.get_events(ifd, 5)
-            print(*(e.wd for e in events))
+            if events:
+                print(*(e.wd for e in events))
             deleted = any(e.mask & inotifyx.IN_DELETE
                           for e in events)
             if deleted:
                 print('%s:%s: log deleted' % (pod.metadata.name, container_id))
                 return
             line = log_file.readline()
-            container_meta_print = format_dict_for_print(get_container_meta(container_id, pod))
+            container_meta_print = format_dict_for_print(
+                get_container_meta(container_id, pod)
+            )
             while line:
                 print(container_meta_print, json.loads(line)['log'], end='')
                 line = log_file.readline()
