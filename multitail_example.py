@@ -11,7 +11,7 @@ import inotifyx
 ADD, REMOVE = 1, 2
 logging.basicConfig(
     level=logging.INFO,
-    format="%(filename)s:%(lineno)s %(levelname)5s %(funcName)s: %(message)s"
+    format="%(filename)s:%(lineno)-4s %(levelname)5s %(funcName)s: %(message)s"
 )
 log = logging.getLogger('')
 
@@ -51,12 +51,8 @@ def process_q_names(q_names, fd, watches, open_files):
                     del open_files[fname]
     except Empty:
         pass
-    except Exception as e:
-        print e
-        raise
     finally:
         log.debug('watches: %s', watches)
-
 
 
 def process_events(fd, watches, open_files):
@@ -66,7 +62,7 @@ def process_events(fd, watches, open_files):
             continue
         fname = watches.get(event.wd)
         if not fname:  # file shouldn't be watched anymore
-            log.debug('event %s, whats going on?', event)
+            log.warn('event %s, whats going on?', event)
             continue
 
         open_file = open_files.get(fname)
@@ -105,20 +101,27 @@ def watch_thread(q_names):
         os.close(fd)
 
 
+def sigchld_handler(_1, _2):
+    import sys
+    log.info("Got SIGCHLD, exiting")
+    sys.exit()
+
+
 def main():
     from time import sleep
-    from random import randint
+    from signal import signal, SIGCHLD
+    signal(SIGCHLD, sigchld_handler)
     q_names = Queue()
     q_names.put((ADD, '/var/log/dpkg.log'))
     watch = Process(target=watch_thread, args=(q_names,))
+    watch.daemon = True
     watch.start()
     while True:
-        #sleep(0.1)
+        # sleep(0.1)
         q_names.put((ADD, '/var/log/dpkg.log'))
         q_names.put((ADD, 'log'))
         q_names.put((ADD, 'log2'))
         sleep(0.1)
-
 
 
 if __name__ == '__main__':
