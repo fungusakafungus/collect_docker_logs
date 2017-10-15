@@ -2,17 +2,13 @@
 
 import os
 from multiprocessing import Process, Queue
-from Queue import Empty
+from queue import Empty
 import logging
 
 import inotifyx
 
 
 ADD, REMOVE = 1, 2
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(filename)s:%(lineno)-4s %(levelname)5s %(funcName)s: %(message)s"
-)
 log = logging.getLogger('')
 
 
@@ -28,8 +24,9 @@ class Bidict(dict):
 
 
 def process_q_names(q_names, fd, watches, open_files):
+    i = 0
     try:
-        for op, fname in iter(q_names.get_nowait, None):
+        for i, (op, fname) in enumerate(iter(q_names.get_nowait, None)):
             if op == ADD:
                 log.debug('op ADD %s', fname)
                 if fname in watches:
@@ -52,6 +49,7 @@ def process_q_names(q_names, fd, watches, open_files):
     except Empty:
         pass
     finally:
+        log.debug('processed %d names' % i)
         log.debug('watches: %s', watches)
 
 
@@ -77,7 +75,7 @@ def process_file(open_file, fname):
     log.debug('processing %s', fname)
     line = open_file.readline()
     while line:
-        print(fname, line)
+        print((fname, line))
         line = open_file.readline()
 
 
@@ -95,7 +93,7 @@ def watch_thread(q_names):
             log.debug('cleanup fname_or_watch_id %s', fname_or_watch_id)
             if isinstance(fname_or_watch_id, int):  # it's a watch_id!
                 inotifyx.rm_watch(fd, fname_or_watch_id)
-        for fname, open_file in open_files.iteritems():
+        for fname, open_file in open_files.items():
             log.debug('cleanup open_file %s', fname)
             open_file.close()
         os.close(fd)
@@ -125,4 +123,8 @@ def main():
 
 
 if __name__ == '__main__':
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(filename)s:%(lineno)-4s %(levelname)5s %(funcName)s: %(message)s"
+    )
     main()
