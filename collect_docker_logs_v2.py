@@ -14,7 +14,7 @@ CONTAINER_WATCHES = {}
 PODS = {}
 OPEN_FILES = {}
 GL_HANDLER = None
-GL_IP = None
+CLUSTER = None
 
 
 class AsyncIteratorExecutor:
@@ -41,6 +41,71 @@ class AsyncIteratorExecutor:
         return value
 
 
+def find_container_status_in_pod(pod, container_id):
+    for cs in pod.status.container_statuses:
+        if container_id in cs.container_id:
+            return cs
+    LOGGER.warn('Container status for %s not found in pod %s',
+                container_id, pod.metadata.name)
+    return None
+
+
+def process_log_entry(log_entry, pod, container_id):
+    LOGGER.info('%s %s',
+                pod.metadata.name,
+                log_entry['log'].strip())
+    gl_event = dict(
+        version="1.1",
+        host=pod.spec.node_name or pod.metadata.name,
+        short_message=log_entry['log'],
+        timestamp=log_entry['time'],
+        level=6,
+
+        _cluster=CLUSTER,
+        _namespace=pod.metadata.namespace,
+    )
+    container_status = find_container_status_in_pod(pod, container_id)
+    if container_status:
+        gl_event['_container_image'] = container_status.image
+        gl_event['_container_restart_count'] = container_status.restart_count
+        if container_status.name:
+            gl_event['_container_name'] = container_status.name
+            container_spec = [
+                c for c in pod.spec.containers
+                if c.name == container_status.name
+            ]
+            if len(container_spec) == 1:
+                container_spec = container_spec[0]
+
+    pickle = GL_HANDLER.makePickle(gl_event)
+    GL_HANDLER.send(pickle)
+
+
+class EventHandler(pyinotify.ProcessEvent):
+
+    def __init__(self, fname, pod, container_id):
+        pyinotify.ProcessEvent.__init__(self)
+        self.fname = fname
+        self.pod = pod
+        self.container_id = container_id
+        self.file = None
+
+    def process_IN_MODIFY(self, event):
+        LOGGER.debug('processing %s', self.fname)
+        if not self.file:
+            try:
+                self.file = open(self.fname)
+                self.file.seek(0, 2)  # seek to end
+            except FileNotFoundError:
+                LOGGER.debug('FileNotFound %s', self.fname)
+                return
+        line = self.file.readline()
+        while line:
+            log_entry = json.loads(line)
+            process_log_entry(log_entry, self.pod, self.container_id)
+            line = self.file.readline()
+
+
 def process_file(open_file, fname):
     import json
     LOGGER.debug('processing %s', fname)
@@ -51,9 +116,6 @@ def process_file(open_file, fname):
         line = open_file.readline()
 
 def process_IN_MODIFY(event):
-    global GL_HANDLER
-    if not GL_HANDLER:
-        GL_HANDLER = graypy.handler.GELFHandler(GL_IP)
     fname = event.pathname
     LOGGER.debug("IN_MODIFY %s", fname)
     open_file = OPEN_FILES.get(fname)
@@ -68,7 +130,11 @@ def start_container_watch(container_id, pod):
     log_filename = '/var/lib/docker/containers/%s/%s-json.log' % (
         container_id, container_id)
     LOGGER.info('starting container watch %s:%s', pod.metadata.name, container_id)
-    wdd = INOTIFY_WATCH_MANAGER.add_watch(log_filename, pyinotify.IN_MODIFY)
+    wdd = INOTIFY_WATCH_MANAGER.add_watch(
+        log_filename,
+        pyinotify.IN_MODIFY,
+        EventHandler(log_filename, pod, container_id),
+    )
     CONTAINER_WATCHES.update(wdd)
     LOGGER.info("# CONTAINER_WATCHES after: %s", len(CONTAINER_WATCHES))
 
@@ -145,9 +211,11 @@ async def watch_pods(loop):
 
 
 def main(args):
-    global GL_IP
+    global GL_HANDLER, CLUSTER
     assert len(args) == 3, "Two arguments, graylog_ip cluster_name"
-    GL_IP = args[1]
+    gl_ip = args[1]
+    CLUSTER = args[2]
+    GL_HANDLER = graypy.handler.GELFHandler(gl_ip)
 
     import concurrent.futures
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
@@ -158,7 +226,6 @@ def main(args):
     notifier = pyinotify.AsyncioNotifier(
         INOTIFY_WATCH_MANAGER,
         loop=loop,
-        default_proc_fun=process_IN_MODIFY
     )
     loop.create_task(watch_pods(loop))
     try:
@@ -174,7 +241,7 @@ if __name__ == '__main__':
     import logging
     import sys
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.WARN,
         format="%(filename)s:%(lineno)-4s %(levelname)5s %(funcName)s: %(message)s"
     )
     main(sys.argv)
