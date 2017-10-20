@@ -27,16 +27,22 @@ class AsyncIteratorExecutor:
     post at
     https://blogs.gentoo.org/zmedico/2016/09/17/adapting-regular-iterators-to-asynchronous-iterators-in-python/
     """
-    def __init__(self, iterator, loop=None, executor=None):
+    def __init__(self, iterator):
         self._iterator = iterator
-        self._loop = loop or asyncio.get_event_loop()
-        self._executor = executor
 
     def __aiter__(self):
         return self
 
     async def __anext__(self):
-        value = await self._loop.run_in_executor(self._executor, next, self._iterator, self)
+        # call next(self._iterator, self) in a thread. self will be returned
+        # when the iterator is exhausted
+        value = await asyncio.get_event_loop().run_in_executor(
+            None,  # default executor
+            next,
+            self._iterator,
+            self
+        )
+        # self is returned by next() to communicate end of iteration
         if value is self:
             raise StopAsyncIteration
         return value
@@ -150,6 +156,8 @@ def stop_pod_watch(pod):
 
 def update_pod_watch(pod):
     if not pod.status.container_statuses: return
+    if pod.spec.node_name != NODE_NAME: return
+
     api_container_ids = set(c.container_id.replace('docker://', '')
                             for c in pod.status.container_statuses
                             if c.container_id)
@@ -169,8 +177,7 @@ def update_pod_watch(pod):
         start_container_watch(container_id, pod)
 
 
-async def watch_pods(node_name):
-    global KUBERNETES_POD_WATCH
+async def watch_pods():
     from kubernetes import client, config, watch
     try:
         config.load_kube_config()
@@ -182,8 +189,6 @@ async def watch_pods(node_name):
         async for pod in AsyncIteratorExecutor(w.stream(v1.list_pod_for_all_namespaces)):
             type_ = pod['type']
             pod = pod['object']
-            if pod.spec.node_name != node_name:
-                continue
             LOGGER.info('pod event %s %s', pod.metadata.name, type_)
             if type_ == 'ADDED':
                 start_pod_watch(pod)
@@ -208,12 +213,12 @@ def find_myself():
 
 
 def main(args):
-    global GL_HANDLER, CLUSTER
+    global GL_HANDLER, CLUSTER, NODE_NAME
     gl_ip = args.graylog_host
     CLUSTER = args.cluster_name
     GL_HANDLER = graypy.handler.GELFHandler(gl_ip)
 
-    node_name = find_myself()
+    NODE_NAME = find_myself()
 
     import concurrent.futures
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
@@ -226,7 +231,7 @@ def main(args):
         INOTIFY_WATCH_MANAGER,
         loop=loop,
     )
-    loop.create_task(watch_pods(node_name))
+    loop.create_task(watch_pods())
     try:
         loop.run_forever()
     finally:
