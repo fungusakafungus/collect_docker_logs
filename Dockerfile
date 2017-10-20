@@ -19,5 +19,5 @@ RUN virtualenv --system-site-packages -p python3.5 /usr/local
 ADD requirements.txt .
 RUN /usr/local/bin/pip install -r requirements.txt
 RUN /usr/local/bin/python -mkubernetes.client.api_client
-ADD collect_docker_logs_v2.py /code/
+ADD collect_docker_logs.py /code/
 WORKDIR /code
