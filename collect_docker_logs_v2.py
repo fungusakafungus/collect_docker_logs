@@ -15,6 +15,7 @@ PODS = {}
 OPEN_FILES = {}
 GL_HANDLER = None
 CLUSTER = None
+APPLICATION_NAME = None
 
 
 class AsyncIteratorExecutor:
@@ -60,6 +61,8 @@ def process_log_entry(log_entry, pod, container_id):
         short_message=log_entry['log'],
         timestamp=log_entry['time'],
         level=6,
+        _application_name=APPLICATION_NAME,
+        _name=pod.metadata.name,
 
         _cluster=CLUSTER,
         _namespace=pod.metadata.namespace,
@@ -94,7 +97,7 @@ class EventHandler(pyinotify.ProcessEvent):
         LOGGER.debug('processing %s', self.fname)
         if not self.file:
             try:
-                self.file = open(self.fname)
+                self.file = open(self.fname, encoding="utf-8")
                 self.file.seek(0, 2)  # seek to end
             except FileNotFoundError:
                 LOGGER.debug('FileNotFound %s', self.fname)
@@ -104,26 +107,6 @@ class EventHandler(pyinotify.ProcessEvent):
             log_entry = json.loads(line)
             process_log_entry(log_entry, self.pod, self.container_id)
             line = self.file.readline()
-
-
-def process_file(open_file, fname):
-    import json
-    LOGGER.debug('processing %s', fname)
-    line = open_file.readline()
-    while line:
-        LOGGER.info(json.loads(line)['time'].strip())
-        LOGGER.info(json.loads(line)['log'].strip())
-        line = open_file.readline()
-
-def process_IN_MODIFY(event):
-    fname = event.pathname
-    LOGGER.debug("IN_MODIFY %s", fname)
-    open_file = OPEN_FILES.get(fname)
-    if not open_file:
-        LOGGER.debug('event for %s, opening file', fname)
-        open_file = OPEN_FILES[fname] = open(fname)
-        open_file.seek(0, 2)  # seek to end
-    process_file(open_file, fname)
 
 
 def start_container_watch(container_id, pod):
@@ -186,7 +169,7 @@ def update_pod_watch(pod):
         start_container_watch(container_id, pod)
 
 
-async def watch_pods(loop):
+async def watch_pods(node_name):
     global KUBERNETES_POD_WATCH
     from kubernetes import client, config, watch
     try:
@@ -199,6 +182,8 @@ async def watch_pods(loop):
         async for pod in AsyncIteratorExecutor(w.stream(v1.list_pod_for_all_namespaces)):
             type_ = pod['type']
             pod = pod['object']
+            if pod.spec.node_name != node_name:
+                continue
             LOGGER.info('pod event %s %s', pod.metadata.name, type_)
             if type_ == 'ADDED':
                 start_pod_watch(pod)
@@ -210,24 +195,38 @@ async def watch_pods(loop):
                 raise RuntimeError('Unhandled type ' + type_)
 
 
+def find_myself():
+    import socket
+    from kubernetes import client, config, watch
+    try:
+        config.load_kube_config()
+    except IOError:
+        config.load_incluster_config()
+    v1 = client.CoreV1Api()
+    pod = v1.read_namespaced_pod(socket.gethostname(), 'kube-system')
+    return pod.spec.node_name
+
+
 def main(args):
     global GL_HANDLER, CLUSTER
-    assert len(args) == 3, "Two arguments, graylog_ip cluster_name"
-    gl_ip = args[1]
-    CLUSTER = args[2]
+    gl_ip = args.graylog_host
+    CLUSTER = args.cluster_name
     GL_HANDLER = graypy.handler.GELFHandler(gl_ip)
+
+    node_name = find_myself()
 
     import concurrent.futures
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
     loop = asyncio.get_event_loop()
     loop.set_default_executor(executor)
-    loop.set_debug(True)
+    if args.verbose > 0:
+        loop.set_debug(True)
     notifier = pyinotify.AsyncioNotifier(
         INOTIFY_WATCH_MANAGER,
         loop=loop,
     )
-    loop.create_task(watch_pods(loop))
+    loop.create_task(watch_pods(node_name))
     try:
         loop.run_forever()
     finally:
@@ -240,8 +239,23 @@ def main(args):
 if __name__ == '__main__':
     import logging
     import sys
+    import argparse
+    APPLICATION_NAME = sys.argv[0]
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-v", "--verbose", help="increase output verbosity",
+                        action="count", default=0)
+    parser.add_argument("graylog_host", help="where to send logs")
+    parser.add_argument("cluster_name", help="cluster name, will be used as field 'cluster'")
+    args = parser.parse_args()
+    if args.verbose == 1:
+        level = logging.INFO
+    elif args.verbose > 1:
+        level = logging.DEBUG
+    else:
+        level = logging.WARN
     logging.basicConfig(
-        level=logging.WARN,
+        level=level,
         format="%(filename)s:%(lineno)-4s %(levelname)5s %(funcName)s: %(message)s"
     )
-    main(sys.argv)
+
+    main(args)
