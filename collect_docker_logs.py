@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# encoding: utf-8
 
 import json
 import asyncio
@@ -6,6 +7,8 @@ import pyinotify
 import logging
 import re
 import graypy.handler
+import dateutil.parser
+
 graypy.handler.make_message_dict = lambda x, *args: x  # get out of my way
 
 
@@ -72,7 +75,7 @@ def process_log_entry(log_entry, pod, container_id):
         version="1.1",
         host=pod.spec.node_name or pod.metadata.name,
         short_message=log_entry['log'],
-        timestamp=log_entry['time'],
+        timestamp=dateutil.parser.parse(log_entry['time']).timestamp(),
         level=6,
         _application_name=APPLICATION_NAME,
         _name=pod.metadata.name,
