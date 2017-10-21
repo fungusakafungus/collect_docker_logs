@@ -4,15 +4,15 @@ import json
 import asyncio
 import pyinotify
 import logging
+import re
 import graypy.handler
 graypy.handler.make_message_dict = lambda x, *args: x  # get out of my way
 
 
 LOGGER = logging.getLogger()
 INOTIFY_WATCH_MANAGER = pyinotify.WatchManager()
-CONTAINER_WATCHES = {}
-PODS = {}
-OPEN_FILES = {}
+CONTAINER_WATCHES = {}  # container log filename -> inotify filedescriptor
+PODS = {}  # pod uid -> set of container ids
 GL_HANDLER = None
 CLUSTER = None
 APPLICATION_NAME = None
@@ -63,6 +63,8 @@ def find_container_status_in_pod(pod, container_id):
 
 
 def process_log_entry(log_entry, pod, container_id):
+    good_label_re = re.compile('[a-z-]*')  # we are very picky here
+    boring_labels = 'pod-template-hash',
     LOGGER.info('%s %s',
                 pod.metadata.name,
                 log_entry['log'].strip())
@@ -90,6 +92,15 @@ def process_log_entry(log_entry, pod, container_id):
             ]
             if len(container_spec) == 1:
                 container_spec = container_spec[0]
+    if pod.metadata.labels:
+        for k, v in pod.metadata.labels.items():
+            if k in boring_labels:
+                continue
+            if not good_label_re.fullmatch(k):
+                continue
+            k = k.replace('-', '_')
+            k = '_pod_label_' + k
+            gl_event[k] = v
 
     pickle = GL_HANDLER.makePickle(gl_event)
     GL_HANDLER.send(pickle)
