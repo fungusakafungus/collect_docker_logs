@@ -17,6 +17,11 @@ GL_HANDLER = None
 CLUSTER = None
 APPLICATION_NAME = None
 
+# Pods are considered new if they appeared during runtime of the script.
+# In that case their whole log is sent to graylog. Otherwise only newly added
+# lines are sent.
+NEW_PODS = set()  # of pod uids
+
 
 class AsyncIteratorExecutor:
     """
@@ -104,7 +109,9 @@ class EventHandler(pyinotify.ProcessEvent):
         if not self.file:
             try:
                 self.file = open(self.fname, encoding="utf-8")
-                self.file.seek(0, 2)  # seek to end
+                if self.pod.metadata.uid not in NEW_PODS:
+                    # seek to end for old pods
+                    self.file.seek(0, 2)
             except FileNotFoundError:
                 LOGGER.debug('FileNotFound %s', self.fname)
                 return
@@ -131,7 +138,7 @@ def start_container_watch(container_id, pod):
 def stop_container_watch(container_id):
     log_filename = '/var/lib/docker/containers/%s/%s-json.log' % (
         container_id, container_id)
-    print('terminating watch for ' + container_id)
+    LOGGER.info('terminating watch for ' + container_id)
     wd = CONTAINER_WATCHES[log_filename]
     INOTIFY_WATCH_MANAGER.rm_watch(wd, pyinotify.IN_MODIFY)
     del CONTAINER_WATCHES[log_filename]
@@ -148,7 +155,7 @@ def start_pod_watch(pod):
 
 
 def stop_pod_watch(pod):
-    print('stopping pod ' + pod.metadata.name)
+    LOGGER.info('stopping pod ' + pod.metadata.name)
     for c in PODS[pod.metadata.uid]:
         stop_container_watch(c)
     del PODS[pod.metadata.uid]
@@ -186,14 +193,20 @@ async def watch_pods():
     v1 = client.CoreV1Api()
     w = watch.Watch()
     while True:
+        old_pods = set()
+        for pod in v1.list_pod_for_all_namespaces().items:
+            old_pods.add(pod.metadata.uid)
         async for pod in AsyncIteratorExecutor(w.stream(v1.list_pod_for_all_namespaces)):
             type_ = pod['type']
             pod = pod['object']
             LOGGER.info('pod event %s %s', pod.metadata.name, type_)
             if type_ == 'ADDED':
+                if pod.metadata.uid not in old_pods:
+                    NEW_PODS.add(pod.metadata.uid)
                 start_pod_watch(pod)
             elif type_ == 'DELETED':
                 stop_pod_watch(pod)
+                NEW_PODS.discard(pod.metadata.uid)
             elif type_ == 'MODIFIED':
                 update_pod_watch(pod)
             else:
@@ -231,9 +244,9 @@ def main(args):
         INOTIFY_WATCH_MANAGER,
         loop=loop,
     )
-    loop.create_task(watch_pods())
+    task = loop.create_task(watch_pods())
     try:
-        loop.run_forever()
+        loop.run_until_complete(task)
     finally:
         import os, traceback, faulthandler
         faulthandler.dump_traceback(all_threads=True)
